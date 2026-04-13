@@ -3,6 +3,7 @@ import { swagger } from "@elysiajs/swagger";
 import { cors } from "@elysiajs/cors";
 import { PrismaClient } from "@prisma/client";
 import { authController } from "./features/auth/auth.controller";
+import { eventsController } from "./features/events/events.controller";
 
 // Initialize Database Connection via Prisma v7
 const prisma = new PrismaClient({});
@@ -26,6 +27,7 @@ const app = new Elysia()
   
   // Mounted Feature Plugins
   .use(authController)
+  .use(eventsController)
 
   // Future Domain Mounts will go here
   // .use(usersRouter)
