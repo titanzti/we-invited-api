@@ -1,0 +1,52 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String   // Hashed via Argon2
+  name      String
+  gender    String?
+  image     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relationships
+  events      Event[]      // Events created by the user
+  joinRecords JoinEvent[]  // Events the user has joined
+}
+
+model Event {
+  id          String   @id @default(uuid())
+  title       String   
+  location    String   
+  category    String
+  imageUrl    String?  
+  creatorId   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relationships
+  creator     User         @relation(fields: [creatorId], references: [id])
+  attendees   JoinEvent[]
+}
+
+model JoinEvent {
+  id        String   @id @default(uuid())
+  eventId   String
+  userId    String
+  status    String   @default("PENDING") // PENDING, APPROVED, REJECTED
+  createdAt DateTime @default(now())
+
+  // Relationships
+  event     Event    @relation(fields: [eventId], references: [id])
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@unique([eventId, userId]) // Prevent double joining
+}
