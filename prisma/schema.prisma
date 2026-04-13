@@ -37,11 +37,17 @@ model Event {
   attendees   JoinEvent[]
 }
 
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 model JoinEvent {
-  id        String   @id @default(uuid())
+  id        String        @id @default(uuid())
   eventId   String
   userId    String
-  status    String   @default("PENDING") // PENDING, APPROVED, REJECTED
+  status    RequestStatus @default(PENDING)
   createdAt DateTime @default(now())
 
   // Relationships

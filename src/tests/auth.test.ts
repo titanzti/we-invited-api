@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, afterAll } from "bun:test";
 import { Elysia } from "elysia";
 import { authController } from "../features/auth/auth.controller";
 
@@ -10,10 +10,19 @@ import { authController } from "../features/auth/auth.controller";
 describe("Auth API SIT Authentication Tests", () => {
   const app = new Elysia().use(authController);
   let sessionToken = "";
+  let testEmail = "";
+
+  afterAll(async () => {
+    if (testEmail) {
+      const prisma = new (require("@prisma/client").PrismaClient)();
+      await prisma.user.deleteMany({ where: { email: testEmail } });
+      await prisma.$disconnect();
+    }
+  });
 
   test("Should mock registration or fail via DB constraint if Email exists", async () => {
     // Generate a random email to prevent DB Unique Constraint collision across test runs
-    const testEmail = `sit_test_${Date.now()}@example.com`;
+    testEmail = `sit_test_${Date.now()}@example.com`;
     
     const req = new Request("http://localhost/auth/register", {
       method: "POST",
@@ -44,6 +53,22 @@ describe("Auth API SIT Authentication Tests", () => {
       expect(savedUser).toBeDefined();
       expect(savedUser?.name).toBe("SIT Tester");
       await prisma.$disconnect();
+    }
+  });
+
+  test("Should fetch user profile with session token", async () => {
+    // Only run this test if the previous test succeeded in connecting to DB and getting a token
+    if (sessionToken) {
+      const req = new Request("http://localhost/auth/me", {
+        method: "GET",
+        headers: { "Authorization": `Bearer ${sessionToken}` },
+      });
+
+      const res = await app.handle(req);
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.user).toBeDefined();
+      expect(data.user.name).toBe("SIT Tester");
     }
   });
 
