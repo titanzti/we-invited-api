@@ -42,9 +42,9 @@ describe("Auth API SIT Authentication Tests", () => {
     expect([200, 400]).toContain(res.status);
     
     if (res.status === 200) {
-      const data = await res.json();
+      const data = await res.json() as Record<string, any>;
       expect(data.token).toBeDefined();
-      sessionToken = data.token; // Save token for ME test
+      sessionToken = data.token;
 
       // === REAL DB VERIFICATION ===
       // Prove that the system integration test actually touched the real Postgres DB!
@@ -66,7 +66,7 @@ describe("Auth API SIT Authentication Tests", () => {
 
       const res = await app.handle(req);
       expect(res.status).toBe(200);
-      const data = await res.json();
+      const data = await res.json() as Record<string, any>;
       expect(data.user).toBeDefined();
       expect(data.user.name).toBe("SIT Tester");
     }
