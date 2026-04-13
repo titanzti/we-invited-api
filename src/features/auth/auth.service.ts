@@ -2,6 +2,18 @@ import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient({});
 
+export interface RegisterInput {
+  email: string;
+  password: string;
+  name: string;
+  gender?: string;
+}
+
+export interface LoginInput {
+  email: string;
+  password: string;
+}
+
 export class AuthService {
   /**
    * Safe user return mapping, omitting the password field
@@ -11,7 +23,7 @@ export class AuthService {
     return safeUser;
   }
 
-  static async registerUser(data: any) {
+  static async registerUser(data: RegisterInput) {
     const { email, password, name, gender } = data;
 
     // Check if user exists
@@ -36,7 +48,7 @@ export class AuthService {
     return this.sanitizeUser(user);
   }
 
-  static async loginUser(data: any) {
+  static async loginUser(data: LoginInput) {
     const { email, password } = data;
 
     // Find user
