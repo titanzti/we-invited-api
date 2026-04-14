@@ -8,21 +8,26 @@ datasource db {
 }
 
 model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  password  String
-  name      String
-  gender    String?
-  image     String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  events      Event[]
-  joinRecords JoinEvent[]
+  id               String           @id @default(uuid())
+  email            String           @unique
+  password         String
+  name             String
+  gender           String?
+  image            String?
+  bio              String?
+  phone            String?
+  notificationPrefs NotificationPrefs?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  events           Event[]
+  joinRecords      JoinEvent[]
+  sentInvites      EventInvite[]    @relation("SentInvites")
+  receivedInvites  EventInvite[]    @relation("ReceivedInvites")
+  rsvps            EventRSVP[]
 }
 
 model Event {
-  id               String    @id @default(uuid())
+  id               String           @id @default(uuid())
   title            String
   location         String
   category         String
@@ -31,24 +36,22 @@ model Event {
   startDate        DateTime?
   endDate          DateTime?
   maxCapacity      Int?
-  requiresApproval Boolean   @default(false)
+  requiresApproval Boolean          @default(false)
   latitude         Float?
   longitude        Float?
+  isPublic         Boolean          @default(true)
+  rsvpDeadline     DateTime?
   creatorId        String
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
-
-  creator   User        @relation(fields: [creatorId], references: [id])
-  attendees JoinEvent[]
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  creator          User             @relation(fields: [creatorId], references: [id])
+  attendees        JoinEvent[]
+  invites          EventInvite[]
+  rsvps            EventRSVP[]
 
   @@index([category])
   @@index([creatorId])
-}
-
-enum RequestStatus {
-  PENDING
-  APPROVED
-  REJECTED
+  @@index([isPublic])
 }
 
 model JoinEvent {
@@ -57,9 +60,68 @@ model JoinEvent {
   userId    String
   status    RequestStatus @default(PENDING)
   createdAt DateTime      @default(now())
-
-  event Event @relation(fields: [eventId], references: [id])
-  user  User  @relation(fields: [userId], references: [id])
+  event     Event         @relation(fields: [eventId], references: [id])
+  user      User          @relation(fields: [userId], references: [id])
 
   @@unique([eventId, userId])
+}
+
+model EventInvite {
+  id        String   @id @default(uuid())
+  eventId   String
+  inviterId String
+  inviteeId String
+  status    InviteStatus @default(PENDING)
+  createdAt DateTime @default(now())
+  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  inviter   User     @relation("SentInvites", fields: [inviterId], references: [id])
+  invitee   User     @relation("ReceivedInvites", fields: [inviteeId], references: [id])
+
+  @@unique([eventId, inviteeId])
+}
+
+model EventRSVP {
+  id         String    @id @default(uuid())
+  eventId    String
+  userId     String
+  status     RSVPStatus
+  guestCount Int       @default(0)
+  note       String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  event      Event     @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user       User      @relation(fields: [userId], references: [id])
+
+  @@unique([eventId, userId])
+}
+
+model NotificationPrefs {
+  id                String   @id @default(uuid())
+  userId            String   @unique
+  eventReminders    Boolean  @default(true)
+  inviteAlerts      Boolean  @default(true)
+  rsvpUpdates       Boolean  @default(true)
+  eventChanges      Boolean  @default(true)
+  marketingEmails   Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum InviteStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+}
+
+enum RSVPStatus {
+  GOING
+  NOT_GOING
+  MAYBE
 }

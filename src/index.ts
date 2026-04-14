@@ -4,6 +4,7 @@ import { cors } from "@elysiajs/cors";
 import { PrismaClient } from "@prisma/client";
 import { authController } from "./features/auth/auth.controller";
 import { eventsController } from "./features/events/events.controller";
+import { rsvpController } from "./features/rsvp/rsvp.controller";
 
 // Initialize Database Connection via Prisma v7
 const prisma = new PrismaClient({});
@@ -24,10 +25,11 @@ const app = new Elysia()
 
   // Health check route
   .get("/", () => "Welcome to WeInvited API Engine 🚀")
-  
+
   // Mounted Feature Plugins
   .use(authController)
   .use(eventsController)
+  .use(rsvpController)
 
   // Future Domain Mounts will go here
   // .use(usersRouter)
