@@ -4,6 +4,12 @@ import { cors } from "@elysiajs/cors";
 import { PrismaClient } from "@prisma/client";
 import { authController } from "./features/auth/auth.controller";
 import { eventsController } from "./features/events/events.controller";
+import { createRsvpController } from "./features/rsvp/rsvp.controller";
+
+// Validate required environment variables
+if (!process.env.JWT_SECRET) {
+  throw new Error("JWT_SECRET environment variable is required");
+}
 
 // Initialize Database Connection via Prisma v7
 const prisma = new PrismaClient({});
@@ -24,10 +30,11 @@ const app = new Elysia()
 
   // Health check route
   .get("/", () => "Welcome to WeInvited API Engine 🚀")
-  
+
   // Mounted Feature Plugins
   .use(authController)
   .use(eventsController)
+  .use(createRsvpController(prisma))
 
   // Future Domain Mounts will go here
   // .use(usersRouter)
