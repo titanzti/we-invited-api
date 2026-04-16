@@ -26,13 +26,12 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: "postgresql://admin:adminpassword@db:5432/weinvited_db?schema=public"
-      JWT_SECRET: "super_secret_world_class_key_change_me_in_prod"
+      JWT_SECRET: "${JWT_SECRET:-super_secret_dev_key}"
     ports:
       - "3000:3000"
     volumes:
       - .:/app
       - /app/node_modules
-    command: sh -c "bunx prisma db push && bun run src/index.ts"
 
 volumes:
   db_data:
