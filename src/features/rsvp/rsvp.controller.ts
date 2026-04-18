@@ -109,6 +109,120 @@ export function createRsvpController(prisma: PrismaClient) {
       }
     )
 
+    // DELETE /rsvp/:eventId — cancel my RSVP for an event
+    .delete(
+      "/:eventId",
+      async ({ params, jwt: jwtPlugin, headers, set, db }) => {
+        const userId = await verifyAuth(jwtPlugin, headers.authorization);
+        if (!userId) {
+          set.status = 401;
+          return { error: "Invalid or missing authorization" };
+        }
+        try {
+          const rsvp = await db.eventRSVP.findUnique({
+            where: { eventId_userId: { eventId: params.eventId, userId } },
+          });
+          if (!rsvp) {
+            set.status = 404;
+            return { error: "No RSVP found to cancel" };
+          }
+          await db.eventRSVP.delete({
+            where: { eventId_userId: { eventId: params.eventId, userId } },
+          });
+          set.status = 204;
+          return {};
+        } catch (e: any) {
+          set.status = 500;
+          return { error: e.message || "Failed to cancel RSVP" };
+        }
+      },
+      {
+        params: t.Object({ eventId: t.String() }),
+        detail: {
+          summary: "Cancel my RSVP for an event",
+          tags: ["RSVP"],
+          security: [{ BearerAuth: [] }],
+        },
+      }
+    )
+
+    // GET /rsvp/my - Get my RSVPs
+    .get(
+      "/my",
+      async ({ jwt: jwtPlugin, headers, set, db }) => {
+        const userId = await verifyAuth(jwtPlugin, headers.authorization);
+        if (!userId) {
+          set.status = 401;
+          return { error: "Invalid or missing authorization" };
+        }
+
+        try {
+          const rsvps = await db.eventRSVP.findMany({
+            where: { userId },
+            orderBy: { createdAt: "desc" },
+            include: {
+              event: {
+                include: {
+                  creator: { select: { name: true, email: true, image: true } },
+                },
+              },
+            },
+          });
+
+          return { data: rsvps };
+        } catch (e: any) {
+          set.status = 500;
+          return { error: e.message || "Failed to get RSVPs" };
+        }
+      },
+      {
+        detail: {
+          summary: "Get my RSVPs",
+          tags: ["RSVP"],
+          security: [{ BearerAuth: [] }],
+        },
+      }
+    )
+
+    // GET /rsvp/:eventId/me - Get current user's RSVP for a specific event
+    .get(
+      "/:eventId/me",
+      async ({ params, jwt: jwtPlugin, headers, set, db }) => {
+        const userId = await verifyAuth(jwtPlugin, headers.authorization);
+        if (!userId) {
+          set.status = 401;
+          return { error: "Invalid or missing authorization" };
+        }
+
+        try {
+          const rsvp = await db.eventRSVP.findUnique({
+            where: { eventId_userId: { eventId: params.eventId, userId } },
+            include: {
+              event: { select: { id: true, title: true, startDate: true } },
+            },
+          });
+
+          if (!rsvp) {
+            set.status = 404;
+            return { error: "No RSVP found" };
+          }
+
+          return { data: rsvp };
+        } catch (e: any) {
+          set.status = 500;
+          return { error: e.message || "Failed to get RSVP" };
+        }
+      },
+      {
+        params: t.Object({ eventId: t.String() }),
+        detail: {
+          summary: "Get current user's RSVP for a specific event",
+          tags: ["RSVP"],
+          security: [{ BearerAuth: [] }],
+        },
+      }
+    )
+
     // GET /rsvp/:eventId - Get all RSVPs for an event (owner only)
     .get(
       "/:eventId",
@@ -167,43 +281,6 @@ export function createRsvpController(prisma: PrismaClient) {
       }
     )
 
-    // GET /rsvp/my - Get my RSVPs
-    .get(
-      "/my",
-      async ({ jwt: jwtPlugin, headers, set, db }) => {
-        const userId = await verifyAuth(jwtPlugin, headers.authorization);
-        if (!userId) {
-          set.status = 401;
-          return { error: "Invalid or missing authorization" };
-        }
-
-        try {
-          const rsvps = await db.eventRSVP.findMany({
-            where: { userId },
-            orderBy: { createdAt: "desc" },
-            include: {
-              event: {
-                include: {
-                  creator: { select: { name: true, email: true, image: true } },
-                },
-              },
-            },
-          });
-
-          return { data: rsvps };
-        } catch (e: any) {
-          set.status = 500;
-          return { error: e.message || "Failed to get RSVPs" };
-        }
-      },
-      {
-        detail: {
-          summary: "Get my RSVPs",
-          tags: ["RSVP"],
-          security: [{ BearerAuth: [] }],
-        },
-      }
-    )
 
     // POST /invite/:eventId - Invite users to an event
     .post(
@@ -347,6 +424,21 @@ export function createRsvpController(prisma: PrismaClient) {
               event: { select: { title: true } },
             },
           });
+
+          // Auto-sync with RSVP
+          if (body.action === "accept" || body.action === "decline") {
+            const rsvpStatus = body.action === "accept" ? "GOING" : "NOT_GOING";
+            await db.eventRSVP.upsert({
+              where: { eventId_userId: { eventId: invite.eventId, userId } },
+              update: { status: rsvpStatus },
+              create: {
+                eventId: invite.eventId,
+                userId,
+                status: rsvpStatus,
+                guestCount: 0,
+              },
+            });
+          }
 
           return {
             data: updated,

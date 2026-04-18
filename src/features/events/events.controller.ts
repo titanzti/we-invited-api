@@ -26,11 +26,13 @@ export const eventsController = new Elysia({ prefix: "/events" })
     "/",
     async ({ query, set }) => {
       try {
-        const events = await EventsService.getEvents({
+        const result = await EventsService.getEvents({
           category: query.category,
           q: query.q,
+          cursor: query.cursor,
+          limit: query.limit ? parseInt(query.limit) : undefined,
         });
-        return { data: events };
+        return { data: result.data, nextCursor: result.nextCursor, hasMore: result.hasMore };
       } catch (e: any) {
         set.status = 500;
         return { error: e.message || "Failed to retrieve events" };
@@ -40,9 +42,11 @@ export const eventsController = new Elysia({ prefix: "/events" })
       query: t.Object({
         category: t.Optional(t.String()),
         q: t.Optional(t.String()),
+        cursor: t.Optional(t.String()),
+        limit: t.Optional(t.String()),
       }),
       detail: {
-        summary: "Get events feed (optional filter by category or search)",
+        summary: "Get events feed (paginated, optional filter by category or search)",
         tags: ["Events"],
       },
     }
@@ -69,6 +73,31 @@ export const eventsController = new Elysia({ prefix: "/events" })
         summary: "Get my events (created + joined)",
         tags: ["Events"],
         security: [{ BearerAuth: [] }],
+      },
+    }
+  )
+
+  // GET /events/:id — fetch a single event by ID
+  .get(
+    "/:id",
+    async ({ params, set }) => {
+      try {
+        const event = await EventsService.getEventById(params.id);
+        if (!event) {
+          set.status = 404;
+          return { error: "Event not found" };
+        }
+        return { data: event };
+      } catch (e: any) {
+        set.status = 500;
+        return { error: e.message || "Failed to retrieve event" };
+      }
+    },
+    {
+      params: t.Object({ id: t.String() }),
+      detail: {
+        summary: "Get a single event by ID",
+        tags: ["Events"],
       },
     }
   )
@@ -106,6 +135,80 @@ export const eventsController = new Elysia({ prefix: "/events" })
       }),
       detail: {
         summary: "Create a new event",
+        tags: ["Events"],
+        security: [{ BearerAuth: [] }],
+      },
+    }
+  )
+
+  // PATCH /events/:id — owner-only update
+  .patch(
+    "/:id",
+    async ({ params, body, jwt: jwtPlugin, headers, set }) => {
+      const userId = await verifyAuth(jwtPlugin, headers.authorization);
+      if (!userId) {
+        set.status = 401;
+        return { error: "Invalid or missing authorization" };
+      }
+      try {
+        const updated = await EventsService.updateEvent(params.id, userId, body);
+        return { data: updated };
+      } catch (e: any) {
+        const msg = e.message || "Failed to update event";
+        if (msg.includes("owner")) set.status = 403;
+        else if (msg.includes("not found")) set.status = 404;
+        else set.status = 400;
+        return { error: msg };
+      }
+    },
+    {
+      params: t.Object({ id: t.String() }),
+      body: t.Object({
+        title: t.Optional(t.String()),
+        location: t.Optional(t.String()),
+        category: t.Optional(t.String()),
+        description: t.Optional(t.String()),
+        imageUrl: t.Optional(t.String()),
+        startdateTime: t.Optional(t.String()),
+        entdateTime: t.Optional(t.String()),
+        numpeople: t.Optional(t.String()),
+        requiresApproval: t.Optional(t.Boolean()),
+        latitude: t.Optional(t.Number()),
+        longitude: t.Optional(t.Number()),
+      }),
+      detail: {
+        summary: "Update an event (owner only)",
+        tags: ["Events"],
+        security: [{ BearerAuth: [] }],
+      },
+    }
+  )
+
+  // DELETE /events/:id — owner-only delete
+  .delete(
+    "/:id",
+    async ({ params, jwt: jwtPlugin, headers, set }) => {
+      const userId = await verifyAuth(jwtPlugin, headers.authorization);
+      if (!userId) {
+        set.status = 401;
+        return { error: "Invalid or missing authorization" };
+      }
+      try {
+        await EventsService.deleteEvent(params.id, userId);
+        set.status = 204;
+        return {};
+      } catch (e: any) {
+        const msg = e.message || "Failed to delete event";
+        if (msg.includes("owner")) set.status = 403;
+        else if (msg.includes("not found")) set.status = 404;
+        else set.status = 400;
+        return { error: msg };
+      }
+    },
+    {
+      params: t.Object({ id: t.String() }),
+      detail: {
+        summary: "Delete an event (owner only)",
         tags: ["Events"],
         security: [{ BearerAuth: [] }],
       },
