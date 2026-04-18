@@ -1,6 +1,6 @@
 import { Elysia, t } from "elysia";
 import { jwt } from "@elysiajs/jwt";
-import { EventsService } from "./events.service";
+import { EventsService, NotFoundError, OwnershipError, ConflictError } from "./events.service";
 
 async function verifyAuth(
   jwtPlugin: { verify: (token: string) => Promise<any> },
@@ -25,12 +25,19 @@ export const eventsController = new Elysia({ prefix: "/events" })
   .get(
     "/",
     async ({ query, set }) => {
+      const limit = query.limit ? parseInt(query.limit) : undefined;
+      if (limit !== undefined && (isNaN(limit) || limit < 1 || limit > 50)) {
+        set.status = 400;
+        return { error: "limit must be between 1 and 50" };
+      }
       try {
-        const events = await EventsService.getEvents({
+        const result = await EventsService.getEvents({
           category: query.category,
           q: query.q,
+          cursor: query.cursor,
+          limit,
         });
-        return { data: events };
+        return { data: result.data, nextCursor: result.nextCursor, hasMore: result.hasMore };
       } catch (e: any) {
         set.status = 500;
         return { error: e.message || "Failed to retrieve events" };
@@ -40,9 +47,11 @@ export const eventsController = new Elysia({ prefix: "/events" })
       query: t.Object({
         category: t.Optional(t.String()),
         q: t.Optional(t.String()),
+        cursor: t.Optional(t.String()),
+        limit: t.Optional(t.String()),
       }),
       detail: {
-        summary: "Get events feed (optional filter by category or search)",
+        summary: "Get events feed (paginated, optional filter by category or search)",
         tags: ["Events"],
       },
     }
@@ -69,6 +78,31 @@ export const eventsController = new Elysia({ prefix: "/events" })
         summary: "Get my events (created + joined)",
         tags: ["Events"],
         security: [{ BearerAuth: [] }],
+      },
+    }
+  )
+
+  // GET /events/:id — fetch a single event by ID
+  .get(
+    "/:id",
+    async ({ params, set }) => {
+      try {
+        const event = await EventsService.getEventById(params.id);
+        if (!event) {
+          set.status = 404;
+          return { error: "Event not found" };
+        }
+        return { data: event };
+      } catch (e: any) {
+        set.status = 500;
+        return { error: e.message || "Failed to retrieve event" };
+      }
+    },
+    {
+      params: t.Object({ id: t.String() }),
+      detail: {
+        summary: "Get a single event by ID",
+        tags: ["Events"],
       },
     }
   )
@@ -112,6 +146,78 @@ export const eventsController = new Elysia({ prefix: "/events" })
     }
   )
 
+  // PATCH /events/:id — owner-only update
+  .patch(
+    "/:id",
+    async ({ params, body, jwt: jwtPlugin, headers, set }) => {
+      const userId = await verifyAuth(jwtPlugin, headers.authorization);
+      if (!userId) {
+        set.status = 401;
+        return { error: "Invalid or missing authorization" };
+      }
+      try {
+        const updated = await EventsService.updateEvent(params.id, userId, body);
+        return { data: updated };
+      } catch (e: any) {
+        if (e instanceof OwnershipError) { set.status = 403; return { error: e.message }; }
+        if (e instanceof NotFoundError) { set.status = 404; return { error: e.message }; }
+        set.status = 400;
+        return { error: e.message || "Failed to update event" };
+      }
+    },
+    {
+      params: t.Object({ id: t.String() }),
+      body: t.Object({
+        title: t.Optional(t.String()),
+        location: t.Optional(t.String()),
+        category: t.Optional(t.String()),
+        description: t.Optional(t.String()),
+        imageUrl: t.Optional(t.String()),
+        startdateTime: t.Optional(t.String()),
+        entdateTime: t.Optional(t.String()),
+        numpeople: t.Optional(t.String()),
+        requiresApproval: t.Optional(t.Boolean()),
+        latitude: t.Optional(t.Number()),
+        longitude: t.Optional(t.Number()),
+      }),
+      detail: {
+        summary: "Update an event (owner only)",
+        tags: ["Events"],
+        security: [{ BearerAuth: [] }],
+      },
+    }
+  )
+
+  // DELETE /events/:id — owner-only delete
+  .delete(
+    "/:id",
+    async ({ params, jwt: jwtPlugin, headers, set }) => {
+      const userId = await verifyAuth(jwtPlugin, headers.authorization);
+      if (!userId) {
+        set.status = 401;
+        return { error: "Invalid or missing authorization" };
+      }
+      try {
+        await EventsService.deleteEvent(params.id, userId);
+        set.status = 204;
+        return {};
+      } catch (e: any) {
+        if (e instanceof OwnershipError) { set.status = 403; return { error: e.message }; }
+        if (e instanceof NotFoundError) { set.status = 404; return { error: e.message }; }
+        set.status = 400;
+        return { error: e.message || "Failed to delete event" };
+      }
+    },
+    {
+      params: t.Object({ id: t.String() }),
+      detail: {
+        summary: "Delete an event (owner only)",
+        tags: ["Events"],
+        security: [{ BearerAuth: [] }],
+      },
+    }
+  )
+
   .post(
     "/:id/join",
     async ({ params, jwt: jwtPlugin, headers, set }) => {
@@ -127,12 +233,10 @@ export const eventsController = new Elysia({ prefix: "/events" })
           : "Joined successfully";
         return { data: join, message: msg };
       } catch (e: any) {
-        const msg = e.message || "Failed to join event";
-        if (msg.includes("not found")) set.status = 404;
-        else if (msg.includes("Already") || msg.includes("own event") || msg.includes("full"))
-          set.status = 409;
-        else set.status = 400;
-        return { error: msg };
+        if (e instanceof NotFoundError) { set.status = 404; return { error: e.message }; }
+        if (e instanceof ConflictError) { set.status = 409; return { error: e.message }; }
+        set.status = 400;
+        return { error: e.message || "Failed to join event" };
       }
     },
     {
@@ -158,9 +262,9 @@ export const eventsController = new Elysia({ prefix: "/events" })
         const requests = await EventsService.getJoinRequests(params.id, userId);
         return { data: requests };
       } catch (e: any) {
-        const msg = e.message || "Failed to get requests";
-        set.status = msg.includes("owner") ? 403 : 400;
-        return { error: msg };
+        if (e instanceof OwnershipError) { set.status = 403; return { error: e.message }; }
+        set.status = 400;
+        return { error: e.message || "Failed to get requests" };
       }
     },
     {
@@ -189,12 +293,11 @@ export const eventsController = new Elysia({ prefix: "/events" })
           message: `Request ${body.action}d successfully`,
         };
       } catch (e: any) {
-        const msg = e.message || "Failed to process request";
-        if (msg.includes("owner")) set.status = 403;
-        else if (msg.includes("not found")) set.status = 404;
-        else if (msg.includes("already")) set.status = 409;
-        else set.status = 400;
-        return { error: msg };
+        if (e instanceof OwnershipError) { set.status = 403; return { error: e.message }; }
+        if (e instanceof NotFoundError) { set.status = 404; return { error: e.message }; }
+        if (e instanceof ConflictError) { set.status = 409; return { error: e.message }; }
+        set.status = 400;
+        return { error: e.message || "Failed to process request" };
       }
     },
     {

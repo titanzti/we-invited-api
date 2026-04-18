@@ -2,6 +2,10 @@ import { PrismaClient, type Prisma } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
+export class NotFoundError extends Error {}
+export class OwnershipError extends Error {}
+export class ConflictError extends Error {}
+
 interface CreateEventInput {
   title: string;
   location: string;
@@ -16,9 +20,13 @@ interface CreateEventInput {
   longitude?: number;
 }
 
+const PAGE_SIZE = 15;
+
 interface GetEventsQuery {
   category?: string;
   q?: string;
+  cursor?: string;
+  limit?: number;
 }
 
 export class EventsService {
@@ -50,6 +58,7 @@ export class EventsService {
 
   static async getEvents(query: GetEventsQuery) {
     const where: Prisma.EventWhereInput = {};
+    const take = Math.min(Math.max(query.limit ?? PAGE_SIZE, 1), 50);
 
     if (query.category) {
       where.category = { equals: query.category, mode: "insensitive" };
@@ -66,14 +75,35 @@ export class EventsService {
     const events = await prisma.event.findMany({
       where,
       orderBy: { createdAt: "desc" },
-      take: 50,
+      take: take + 1,
+      ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
       include: {
         creator: { select: { name: true, image: true, email: true } },
         _count: { select: { attendees: true } },
       },
     });
 
-    return events.map(this.mapToPostModel);
+    const hasMore = events.length > take;
+    const page = hasMore ? events.slice(0, take) : events;
+    const nextCursor = hasMore ? page[page.length - 1]?.id : null;
+
+    return {
+      data: page.map(this.mapToPostModel),
+      nextCursor,
+      hasMore,
+    };
+  }
+
+  static async getEventById(id: string) {
+    const event = await prisma.event.findUnique({
+      where: { id },
+      include: {
+        creator: { select: { name: true, image: true, email: true } },
+        _count: { select: { attendees: true } },
+      },
+    });
+    if (!event) return null;
+    return this.mapToPostModel(event);
   }
 
   static async createEvent(data: CreateEventInput, creatorId: string) {
@@ -106,17 +136,17 @@ export class EventsService {
       include: { _count: { select: { attendees: true } } },
     });
 
-    if (!event) throw new Error("Event not found");
-    if (event.creatorId === userId) throw new Error("You cannot join your own event");
+    if (!event) throw new NotFoundError("Event not found");
+    if (event.creatorId === userId) throw new ConflictError("You cannot join your own event");
 
     if (event.maxCapacity && event._count.attendees >= event.maxCapacity) {
-      throw new Error("Event is full");
+      throw new ConflictError("Event is full");
     }
 
     const existing = await prisma.joinEvent.findUnique({
       where: { eventId_userId: { eventId, userId } },
     });
-    if (existing) throw new Error("Already joined");
+    if (existing) throw new ConflictError("Already joined");
 
     const status = event.requiresApproval ? "PENDING" : "APPROVED";
 
@@ -133,8 +163,8 @@ export class EventsService {
 
   static async getJoinRequests(eventId: string, ownerId: string) {
     const event = await prisma.event.findUnique({ where: { id: eventId } });
-    if (!event) throw new Error("Event not found");
-    if (event.creatorId !== ownerId) throw new Error("Not the event owner");
+    if (!event) throw new NotFoundError("Event not found");
+    if (event.creatorId !== ownerId) throw new OwnershipError("Not the event owner");
 
     return prisma.joinEvent.findMany({
       where: { eventId },
@@ -151,8 +181,8 @@ export class EventsService {
       include: { event: true },
     });
 
-    if (!join) throw new Error("Join request not found");
-    if (join.event.creatorId !== ownerId) throw new Error("Not the event owner");
+    if (!join) throw new NotFoundError("Join request not found");
+    if (join.event.creatorId !== ownerId) throw new OwnershipError("Not the event owner");
     if (join.status !== "PENDING") throw new Error("Request already processed");
 
     return prisma.joinEvent.update({
@@ -198,5 +228,46 @@ export class EventsService {
       }
     }
     return merged;
+  }
+
+  static async updateEvent(id: string, ownerId: string, data: Partial<CreateEventInput>) {
+    const event = await prisma.event.findUnique({ where: { id } });
+    if (!event) throw new NotFoundError("Event not found");
+    if (event.creatorId !== ownerId) throw new OwnershipError("Not the event owner");
+
+    const directFields: (keyof CreateEventInput)[] = [
+      'title', 'location', 'category', 'description', 'imageUrl',
+      'requiresApproval', 'latitude', 'longitude',
+    ];
+    const updateData: Record<string, any> = {};
+    for (const key of directFields) {
+      if (data[key] !== undefined) updateData[key] = data[key];
+    }
+    if (data.startdateTime !== undefined) {
+      updateData.startDate = data.startdateTime ? new Date(data.startdateTime) : null;
+    }
+    if (data.entdateTime !== undefined) {
+      updateData.endDate = data.entdateTime ? new Date(data.entdateTime) : null;
+    }
+    if (data.numpeople !== undefined) {
+      updateData.maxCapacity = data.numpeople ? parseInt(data.numpeople) : null;
+    }
+
+    const updated = await prisma.event.update({
+      where: { id },
+      data: updateData,
+      include: {
+        creator: { select: { name: true, image: true, email: true } },
+      },
+    });
+
+    return this.mapToPostModel(updated);
+  }
+
+  static async deleteEvent(id: string, ownerId: string) {
+    const event = await prisma.event.findUnique({ where: { id } });
+    if (!event) throw new NotFoundError("Event not found");
+    if (event.creatorId !== ownerId) throw new OwnershipError("Not the event owner");
+    await prisma.event.delete({ where: { id } });
   }
 }
