@@ -1,6 +1,6 @@
 import { Elysia, t } from "elysia";
 import { jwt } from "@elysiajs/jwt";
-import { EventsService } from "./events.service";
+import { EventsService, NotFoundError, OwnershipError, ConflictError } from "./events.service";
 
 async function verifyAuth(
   jwtPlugin: { verify: (token: string) => Promise<any> },
@@ -25,12 +25,17 @@ export const eventsController = new Elysia({ prefix: "/events" })
   .get(
     "/",
     async ({ query, set }) => {
+      const limit = query.limit ? parseInt(query.limit) : undefined;
+      if (limit !== undefined && (isNaN(limit) || limit < 1 || limit > 50)) {
+        set.status = 400;
+        return { error: "limit must be between 1 and 50" };
+      }
       try {
         const result = await EventsService.getEvents({
           category: query.category,
           q: query.q,
           cursor: query.cursor,
-          limit: query.limit ? parseInt(query.limit) : undefined,
+          limit,
         });
         return { data: result.data, nextCursor: result.nextCursor, hasMore: result.hasMore };
       } catch (e: any) {
@@ -154,11 +159,10 @@ export const eventsController = new Elysia({ prefix: "/events" })
         const updated = await EventsService.updateEvent(params.id, userId, body);
         return { data: updated };
       } catch (e: any) {
-        const msg = e.message || "Failed to update event";
-        if (msg.includes("owner")) set.status = 403;
-        else if (msg.includes("not found")) set.status = 404;
-        else set.status = 400;
-        return { error: msg };
+        if (e instanceof OwnershipError) { set.status = 403; return { error: e.message }; }
+        if (e instanceof NotFoundError) { set.status = 404; return { error: e.message }; }
+        set.status = 400;
+        return { error: e.message || "Failed to update event" };
       }
     },
     {
@@ -198,11 +202,10 @@ export const eventsController = new Elysia({ prefix: "/events" })
         set.status = 204;
         return {};
       } catch (e: any) {
-        const msg = e.message || "Failed to delete event";
-        if (msg.includes("owner")) set.status = 403;
-        else if (msg.includes("not found")) set.status = 404;
-        else set.status = 400;
-        return { error: msg };
+        if (e instanceof OwnershipError) { set.status = 403; return { error: e.message }; }
+        if (e instanceof NotFoundError) { set.status = 404; return { error: e.message }; }
+        set.status = 400;
+        return { error: e.message || "Failed to delete event" };
       }
     },
     {
@@ -230,12 +233,10 @@ export const eventsController = new Elysia({ prefix: "/events" })
           : "Joined successfully";
         return { data: join, message: msg };
       } catch (e: any) {
-        const msg = e.message || "Failed to join event";
-        if (msg.includes("not found")) set.status = 404;
-        else if (msg.includes("Already") || msg.includes("own event") || msg.includes("full"))
-          set.status = 409;
-        else set.status = 400;
-        return { error: msg };
+        if (e instanceof NotFoundError) { set.status = 404; return { error: e.message }; }
+        if (e instanceof ConflictError) { set.status = 409; return { error: e.message }; }
+        set.status = 400;
+        return { error: e.message || "Failed to join event" };
       }
     },
     {
@@ -261,9 +262,9 @@ export const eventsController = new Elysia({ prefix: "/events" })
         const requests = await EventsService.getJoinRequests(params.id, userId);
         return { data: requests };
       } catch (e: any) {
-        const msg = e.message || "Failed to get requests";
-        set.status = msg.includes("owner") ? 403 : 400;
-        return { error: msg };
+        if (e instanceof OwnershipError) { set.status = 403; return { error: e.message }; }
+        set.status = 400;
+        return { error: e.message || "Failed to get requests" };
       }
     },
     {
@@ -292,12 +293,11 @@ export const eventsController = new Elysia({ prefix: "/events" })
           message: `Request ${body.action}d successfully`,
         };
       } catch (e: any) {
-        const msg = e.message || "Failed to process request";
-        if (msg.includes("owner")) set.status = 403;
-        else if (msg.includes("not found")) set.status = 404;
-        else if (msg.includes("already")) set.status = 409;
-        else set.status = 400;
-        return { error: msg };
+        if (e instanceof OwnershipError) { set.status = 403; return { error: e.message }; }
+        if (e instanceof NotFoundError) { set.status = 404; return { error: e.message }; }
+        if (e instanceof ConflictError) { set.status = 409; return { error: e.message }; }
+        set.status = 400;
+        return { error: e.message || "Failed to process request" };
       }
     },
     {
